@@ -1,5 +1,5 @@
 # MawarithLens
-
+https://mawarithlens.onrender.com/
 **MawarithLens** is an online Islamic inheritance (*Fara'id*) assistant that turns everyday family and estate stories into clear share breakdowns, primary references, and scholarly or legal review alerts.
 
 ---
@@ -17,7 +17,7 @@
 
 ## How to Use It
 
-1. **Open MawarithLens** in your browser.
+1. **Open MawarithLens** in your browser. https://mawarithlens.onrender.com/
 2. **Choose your preferences** in the sidebar: select your preferred school (**Maliki** or **Hanafi**), pick a sample scenario if you want a quick example, and choose **English** or **العربية (Arabic)**.
 3. **Enter the case details** in the story box—including surviving relatives, properties or savings, debts, funeral costs, and any *wasiyyah*.
 4. **Click "Analyze Estate Distribution"** to view the summary, heir shares, references, share chart, and any review notice.
