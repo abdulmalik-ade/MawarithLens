@@ -1,5 +1,4 @@
 # MawarithLens
-https://mawarithlens.onrender.com/
 
 **MawarithLens** is an online Islamic inheritance (*Fara'id*) assistant that turns everyday family and estate stories into clear share breakdowns, primary references, and scholarly or legal review alerts.
 
