@@ -1,6 +1,8 @@
 import csv
 from datetime import datetime, timezone
+import json
 import os
+import urllib.request
 import streamlit as st
 from hybrid_faraid import (
     analyze_inheritance_case,
@@ -144,18 +146,50 @@ def is_google_auth_configured() -> bool:
         return False
 
 
+def get_waitlist_webhook_url() -> str:
+    env_url = (os.getenv("WAITLIST_WEBHOOK_URL") or "").strip()
+    if env_url:
+        return env_url
+    try:
+        return str(st.secrets.get("WAITLIST_WEBHOOK_URL", "") or "").strip()
+    except Exception:
+        return ""
+
+
 def save_waitlist_entry(name: str, email: str, user_type: str, notes: str) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "timestamp": timestamp,
+        "name": name.strip(),
+        "email": email.strip(),
+        "user_type": user_type.strip(),
+        "notes": notes.strip(),
+    }
+
+    # 1. Push directly to Google Sheets via Apps Script webhook if configured
+    webhook_url = get_waitlist_webhook_url()
+    if webhook_url:
+        req = urllib.request.Request(
+            webhook_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+
+    # 2. Also keep a local CSV backup
     file_exists = os.path.exists(WAITLIST_FILE)
     with open(WAITLIST_FILE, mode="a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
             writer.writerow(["timestamp_utc", "name", "email", "user_type", "notes"])
         writer.writerow([
-            datetime.now(timezone.utc).isoformat(),
-            name.strip(),
-            email.strip(),
-            user_type.strip(),
-            notes.strip(),
+            timestamp,
+            payload["name"],
+            payload["email"],
+            payload["user_type"],
+            payload["notes"],
         ])
 
 
@@ -165,9 +199,9 @@ def render_waitlist_form(default_name: str = "", default_email: str = "", key_pr
         <div class="waitlist-card">
             <h3 style="margin-top:0;">🚀 Join the MawarithLens Pro Waitlist</h3>
             <p style="margin-bottom:0.4rem;">
-                You've reached the <strong>3 free calculations</strong> limit for this session.
+                You've used all <strong>3 complimentary analyses</strong> for this session.
                 Join the priority whitelist to get early access to unlimited runs, downloadable PDF estate reports,
-                and multi-property breakdowns when Pro subscriptions launch.
+                and multi-property breakdowns when Pro plans launch.
             </p>
         </div>
         """,
@@ -197,11 +231,14 @@ def render_waitlist_form(default_name: str = "", default_email: str = "", key_pr
             if not wl_email.strip() or "@" not in wl_email:
                 st.warning("Please enter a valid email address.")
             else:
-                save_waitlist_entry(wl_name, wl_email, wl_role, wl_notes)
-                st.session_state["waitlist_joined"] = True
-                st.success(
-                    f"You're on the whitelist, {wl_name or 'friend'}! We'll notify **{wl_email}** as soon as Pro access opens."
-                )
+                try:
+                    save_waitlist_entry(wl_name, wl_email, wl_role, wl_notes)
+                    st.session_state["waitlist_joined"] = True
+                    st.success(
+                        f"You're on the whitelist, {wl_name or 'friend'}! We'll notify **{wl_email}** as soon as Pro access opens."
+                    )
+                except Exception:
+                    st.error("Could not submit your request right now. Please try again in a moment.")
 
 
 # Base Styling
@@ -245,6 +282,13 @@ st.markdown(
             border-radius: 12px;
             padding: 1.1rem 1.2rem;
             height: 100%;
+        }
+        .signin-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 14px;
+            padding: 1.5rem 1.6rem;
+            text-align: center;
         }
         .waitlist-card {
             background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(212, 175, 55, 0.12));
@@ -290,7 +334,7 @@ st.markdown(
 
 
 # ---------------------------------------------------------------------------
-# 1. LANDING PAGE & GOOGLE SIGN-IN / SIGN-UP GATE
+# 1. CLEAN LANDING PAGE & GOOGLE SIGN-IN GATE
 # ---------------------------------------------------------------------------
 auth_ready = is_google_auth_configured()
 user_logged_in = bool(getattr(st.user, "is_logged_in", False)) if auth_ready else False
@@ -345,10 +389,20 @@ if not user_logged_in:
 
     st.markdown("<br/>", unsafe_allow_html=True)
 
-    gate_left, gate_mid, gate_right = st.columns([1.2, 2.2, 1.2])
+    gate_left, gate_mid, gate_right = st.columns([1.3, 2.0, 1.3])
     with gate_mid:
-        st.markdown("### 🔐 Sign In or Sign Up to Start")
-        st.write("Sign in with your Google account to get **3 free estate calculations**—no password or setup needed.")
+        st.markdown(
+            """
+            <div class="signin-card">
+                <h3 style="margin-top:0;">🔐 Sign In to Access MawarithLens</h3>
+                <p style="color:#cbd5e1; margin-bottom:1.1rem;">
+                    Continue with your Google account for quick, secure access—no password setup needed.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div style='height:0.65rem;'></div>", unsafe_allow_html=True)
         if auth_ready:
             st.button(
                 "Continue with Google",
@@ -357,19 +411,14 @@ if not user_logged_in:
                 use_container_width=True,
             )
         else:
-            st.warning(
-                "Google Sign-In is awaiting `[auth]` OAuth credentials in `secrets.toml` (`client_id`, `client_secret`, `redirect_uri`, `cookie_secret`)."
-            )
-
-        with st.expander("✨ Want early access to unlimited runs? Join the Pro Whitelist"):
-            render_waitlist_form(key_prefix="landing_wl")
+            st.warning("Authentication is currently being configured. Please check back shortly.")
 
     st.markdown(FOOTER_HTML, unsafe_allow_html=True)
     st.stop()
 
 
 # ---------------------------------------------------------------------------
-# 2. SIGNED-IN WORKSPACE (3 FREE RUNS + CORE MODEL + WHITELIST ON LIMIT)
+# 2. SIGNED-IN WORKSPACE (3 COMPLIMENTARY RUNS + CORE MODEL + SHEET WHITELIST)
 # ---------------------------------------------------------------------------
 user_name = getattr(st.user, "name", "") or "User"
 user_email = getattr(st.user, "email", "") or ""
@@ -387,11 +436,11 @@ with st.sidebar:
     st.button("Sign out", on_click=st.logout, use_container_width=True)
     st.divider()
 
-    st.markdown("### 🎟️ Usage Quota")
+    st.markdown("### 🎟️ Complimentary Access")
     st.progress(min(1.0, runs_used / MAX_FREE_RUNS))
-    st.caption(f"**{runs_left} of {MAX_FREE_RUNS}** free runs remaining in this session.")
+    st.caption(f"**{runs_left} of {MAX_FREE_RUNS}** complimentary analyses remaining.")
     if runs_left == 0:
-        st.warning("Free limit reached. Join the whitelist below for Pro access.")
+        st.warning("Complimentary quota reached. Join the waitlist to request Pro access.")
 
     st.divider()
     st.markdown("### 🌐 Display / اللغة")
