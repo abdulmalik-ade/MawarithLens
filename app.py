@@ -156,9 +156,46 @@ def get_waitlist_webhook_url() -> str:
         return ""
 
 
+def _call_sheet_webhook(payload: dict) -> dict:
+    webhook_url = get_waitlist_webhook_url()
+    if not webhook_url:
+        return {}
+    req = urllib.request.Request(
+        webhook_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = resp.read().decode("utf-8")
+        return json.loads(raw) if raw else {}
+
+
+def fetch_user_runs(email: str) -> int:
+    if not email:
+        return 0
+    try:
+        res = _call_sheet_webhook({"action": "get_usage", "email": email})
+        return int(res.get("runs_used", 0))
+    except Exception:
+        return 0
+
+
+def increment_user_runs(email: str) -> int:
+    fallback_count = st.session_state.get("free_runs_used", 0) + 1
+    if not email:
+        return fallback_count
+    try:
+        res = _call_sheet_webhook({"action": "increment_usage", "email": email})
+        return int(res.get("runs_used", fallback_count))
+    except Exception:
+        return fallback_count
+
+
 def save_waitlist_entry(name: str, email: str, user_type: str, notes: str) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = {
+        "action": "waitlist",
         "timestamp": timestamp,
         "name": name.strip(),
         "email": email.strip(),
@@ -167,16 +204,8 @@ def save_waitlist_entry(name: str, email: str, user_type: str, notes: str) -> No
     }
 
     # 1. Push directly to Google Sheets via Apps Script webhook if configured
-    webhook_url = get_waitlist_webhook_url()
-    if webhook_url:
-        req = urllib.request.Request(
-            webhook_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            resp.read()
+    if get_waitlist_webhook_url():
+        _call_sheet_webhook(payload)
 
     # 2. Also keep a local CSV backup
     file_exists = os.path.exists(WAITLIST_FILE)
@@ -199,7 +228,7 @@ def render_waitlist_form(default_name: str = "", default_email: str = "", key_pr
         <div class="waitlist-card">
             <h3 style="margin-top:0;">🚀 Join the MawarithLens Pro Waitlist</h3>
             <p style="margin-bottom:0.4rem;">
-                You've used all <strong>3 complimentary analyses</strong> for this session.
+                You've used all <strong>3 complimentary analyses</strong> on your account.
                 Join the priority whitelist to get early access to unlimited runs, downloadable PDF estate reports,
                 and multi-property breakdowns when Pro plans launch.
             </p>
@@ -418,15 +447,16 @@ if not user_logged_in:
 
 
 # ---------------------------------------------------------------------------
-# 2. SIGNED-IN WORKSPACE (3 COMPLIMENTARY RUNS + CORE MODEL + SHEET WHITELIST)
+# 2. SIGNED-IN WORKSPACE (PERSISTENT 3-RUN QUOTA + CORE MODEL + WHITELIST)
 # ---------------------------------------------------------------------------
 user_name = getattr(st.user, "name", "") or "User"
 user_email = getattr(st.user, "email", "") or ""
 
-if "free_runs_used" not in st.session_state:
-    st.session_state["free_runs_used"] = 0
+if st.session_state.get("usage_loaded_for") != user_email:
+    st.session_state["free_runs_used"] = fetch_user_runs(user_email)
+    st.session_state["usage_loaded_for"] = user_email
 
-runs_used = st.session_state["free_runs_used"]
+runs_used = st.session_state.get("free_runs_used", 0)
 runs_left = max(0, MAX_FREE_RUNS - runs_used)
 
 with st.sidebar:
@@ -554,7 +584,7 @@ if run_clicked:
                     language=lang_choice,
                 )
 
-                st.session_state["free_runs_used"] += 1
+                st.session_state["free_runs_used"] = increment_user_runs(user_email)
 
                 m1, m2, m3 = st.columns(3)
                 m1.metric(t["m_madhab"], result.madhab_used)
